@@ -73,12 +73,18 @@ const verifyToken = async (req, res, next) => {
   const query = { token: token };
   const session = await sessionCollection.findOne(query);
 
+  if (!session) {
+    return res.status(401).send({ message: "Unauthorized Access." });
+  }
+
   const userId = session.userId;
   const userQuery = {
     _id: userId
   }
   const user = await userCollection.findOne(userQuery);
-
+  if (!user) {
+    return res.status(401).send({ message: "Unauthorized Access." });
+  }
   // set data in the req object
   req.user = user;
 
@@ -86,8 +92,21 @@ const verifyToken = async (req, res, next) => {
 }
 
 // sy
+// must be used after verifyToken middleware
 const verifySeeker = async (req, res, next) => {
   if (req.user?.role !== 'seeker') {
+    return res.status(403).send({ message: 'forbidden access.' })
+  }
+  next();
+}
+const verifyRecruiter = async (req, res, next) => {
+  if (req.user.role !== 'recruiter') {
+    return res.status(403).send({ message: 'forbidden access.' })
+  }
+  next();
+}
+const verifyAdmin = async (req, res, next) => {
+  if (req.user.role !== 'admin') {
     return res.status(403).send({ message: 'forbidden access.' })
   }
   next();
@@ -107,9 +126,40 @@ app.get('/', (req, res) => {
 app.get('/api/jobs', async (req, res) => {
   try {
     const query = {};
+
+    // job filter query
+    if (req.query.search) {
+      query.$or = [
+        { title: { $regex: req.query.search, $options: 'i' } },
+        { company: { $regex: req.query.search, $options: 'i' } },
+      ]
+    }
+    if (req.query.jobType) {
+      query.jobType = req.query.jobType
+    }
+    if (req.query.jobCategory) {
+      query.category = req.query.jobCategory
+    }
+
+    // company query
     if (req.query.companyId) {
       query.companyId = req.query.companyId;
     }
+
+
+    // pagination related work
+    if (req.query.page) {
+      const page = req.query.page;
+      const perPage = req.query.perPage || 10;
+      const skipItems = (page - 1) * perPage;
+
+      const total=await jobCollection.countDocuments(query)
+      const cursor = jobCollection.find(query).skip(skipItems).limit(perPage);
+      const jobs = await cursor.toArray();
+      return res.send({jobs,total});
+    }
+
+
     const result = await jobCollection.find(query).toArray();
     res.json(result);
   } catch (err) {
@@ -199,8 +249,12 @@ app.get('/api/applications', verifyToken, verifySeeker, async (req, res) => {
     if (req.query.applicantId) {
       query.applicantId = req.query.applicantId;
 
+      // sy
       // check whether asking for information or someone else
-        console.log(req.user,req.query.applicantId)
+      console.log(req.user, req.query.applicantId)
+      if (req.user._id.toString() !== req.query.applicantId) {
+        return res.status(403).send({ message: "Forbidden access!" })
+      }
     }
     if (req.query.jobId) query.jobId = req.query.jobId;
 
